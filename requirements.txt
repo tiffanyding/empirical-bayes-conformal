@@ -1,0 +1,7 @@
+ipykernel
+matplotlib
+numpy
+pandas
+scipy
+pytorch
+torchvision
