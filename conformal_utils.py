@@ -5,12 +5,17 @@ import numpy as np
 #   Standard conformal inference
 #========================================
 
-def compute_qhat(class_probs, true_labels, alpha=.05, plot_scores=False):
+def compute_qhat(class_scores, true_labels, alpha=.05, plot_scores=False):
     '''
     Compute quantile q_hat that will result in marginal coverage of (1-alpha)
+    
+    Inputs:
+        class_scores: num_instances x num_instances array of scores, where a higher score indicates more uncertainty
+        true_labels: num_instances length array of ground truth labels
+    
     '''
     # Select scores that correspond to correct label
-    scores = np.squeeze(np.take_along_axis(class_probs, np.expand_dims(true_labels, axis=1), axis=1))
+    scores = np.squeeze(np.take_along_axis(class_scores, np.expand_dims(true_labels, axis=1), axis=1))
     
     # Sort scores
     scores = np.sort(scores)
@@ -18,7 +23,7 @@ def compute_qhat(class_probs, true_labels, alpha=.05, plot_scores=False):
     # Identify score q_hat such that ~(1-alpha) fraction of scores are below qhat 
     #    Note: More precisely, it is (1-alpha) times a small correction factor
     n = len(true_labels)
-    q_hat = -np.quantile(-scores, np.ceil((n+1)*(1-alpha))/n)
+    q_hat = np.quantile(scores, np.ceil((n+1)*(1-alpha))/n)
     
     # Plot score distribution
     if plot_scores:
@@ -34,7 +39,7 @@ def create_prediction_sets(class_probs, q_hat):
     set_preds = []
     num_samples = len(class_probs)
     for i in range(num_samples):
-        set_preds.append(np.where(class_probs[i,:] > q_hat)[0])
+        set_preds.append(np.where(class_probs[i,:] <= q_hat)[0])
         
     return set_preds
 
@@ -66,9 +71,18 @@ def compute_class_specific_qhats(cal_class_scores, cal_true_labels, alpha=.05, d
             q_hats[k] = default_qhat
         else:
             scores = np.sort(scores)
-            q_hats[k] = -np.quantile(-scores, np.ceil((num_samples+1)*(1-alpha))/num_samples)
+            num_samples = len(scores)
+            val = np.ceil((num_samples+1)*(1-alpha)) / num_samples
+            if val > 1:
+                assert default_qhat is not None, f"Class {k} does not appear enough times to compute a proper quantile. Please specify a value for default_qhat to use in this case."
+                print(f'Warning: Class {k} does not appear enough times to compute a proper quantile,', 
+                      f'so default q_hat value of {default_qhat} will be used')
+                q_hats[k] = default_qhat
+#                 q_hats[k] = np.inf
+            else:
+                q_hats[k] = np.quantile(scores, val)
        
-    print('q_hats', q_hats)
+#     print('q_hats', q_hats)
     return q_hats
 
 # Create class_balanced prediction sets
@@ -81,7 +95,7 @@ def create_cb_prediction_sets(class_scores, q_hats):
     set_preds = []
     num_samples = len(class_scores)
     for i in range(num_samples):
-        set_preds.append(np.where(class_scores[i,:] >= q_hats)[0])
+        set_preds.append(np.where(class_scores[i,:] <= q_hats)[0])
         
     return set_preds
 
