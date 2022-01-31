@@ -1,0 +1,41 @@
+---
+title: "Estimating class coverage distribution under standard conformal inference"
+output: html_notebook
+---
+```{r}
+library(deconvolveR)
+library(ggplot2)
+```
+
+
+```{r}
+support_pts <- seq(from = 0.01, to = 0.99, by = 0.01)
+X <- read.csv("data/standard_conformal_class_coverage.csv")
+observed_class_cov <- X[,2] / X[,1]
+result <- deconv(tau = support_pts, X = X, family = 'Binomial')
+
+g <- result$stats[, "g"]
+ggplot() +
+   geom_histogram(mapping = aes(x = observed_class_cov, y = ..count../sum(..count..)), color = "blue", fill = "blue", bins = 70, alpha = 0.5) +
+   geom_line(mapping = aes(x = support_pts, y = g), color = "black") +
+   labs(title = "Observed class coverage (blue) and est. distr. of true class coverage (black)",
+        x = "Class coverage", 
+        y = "Frequency") 
+
+```
+Compute cdf of g
+```{r}
+G <- cumsum(g)
+ggplot() +
+  geom_line(aes(x = support_pts, y = G)) +
+  labs(title = "CDF of estimated class coverage distribution",
+        x = "Class coverage", 
+        y = "cdf")  +
+  lims(y=c(0,.05))
+
+```
+
+
+
+
+
