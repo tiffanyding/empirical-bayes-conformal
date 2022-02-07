@@ -1,16 +1,19 @@
 ---
 title: "Estimating class coverage distribution under standard conformal inference"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 ```{r}
 library(deconvolveR)
-library(ggplot2)
+library(tidyverse)
 ```
 
+# Using real data
 
 ```{r}
 support_pts <- seq(from = 0.01, to = 0.99, by = 0.01)
-X <- read.csv("data/standard_conformal_class_coverage.csv")
+X <- read.csv("data/standard_conformal_class_coverage.csv", header=FALSE)
 observed_class_cov <- X[,2] / X[,1]
 result <- deconv(tau = support_pts, X = X, family = 'Binomial')
 
@@ -34,8 +37,107 @@ ggplot() +
   lims(y=c(0,.05))
 
 ```
+# Sanity checks using simulated data
+
+To determine how well `deconvolveR` is able to recover the true prior distribution, we do the following:
+  1. Choose a prior distribution $g^*$.
+  2. Sample $\theta_i \sim g^*$. Then sample an "observed class coverage" (more accurately, the number of correctly predicted instances) for class $i$ from $Binom(n_i, \theta_i)$. Repeat this for all 1000 classes
+  3. Feed these simulated "observed class coverages" into `deconv` using the same settings we previously used. Compare the estimated $g$ to the ground-truth $g^*$ that we chose in Step 1. 
+  4. Repeat Steps 2-3 many times.
+  
+## Test 1
+One of the "easiest" possible tests for `deconv` to pass is if we let $g^*$ be the distribution we estimated from the real data, so we will start with this
 
 
+```{r}
+g_star <- g
+num_classes <- 1000
+class_cts <- X[,1]
+
+# Initialize array of zeros
+sim_num_covered <- numeric(num_classes)
+
+for (i in 1:num_classes) {
+  theta_i <- sample(support_pts, size = 1, prob=g_star) 
+  sim_num_covered[i] <- rbinom(n = 1, size = class_cts[i], prob = theta_i)
+}
+
+sim_obs_class_cov <- sim_num_covered / class_cts
+
+data <- cbind(class_cts, sim_num_covered)
+result <- deconv(tau = support_pts, X = data, family = 'Binomial')
+```
 
 
+```{r}
+g <- result$stats[, "g"]
+ggplot() +
+   geom_histogram(mapping = aes(x = sim_obs_class_cov, y = ..count../sum(..count..)), color = "blue", fill = "blue", bins = 70, alpha = 0.5) +
+   geom_line(mapping = aes(x = support_pts, y = g), color = "black") + # Estimated distribution
+   geom_line(mapping = aes(x = support_pts, y = g_star), color = "green") + # True distribution
+   labs(title = "Observed class coverage (blue) and est. distr. of true class coverage (black)",
+        x = "Class coverage", 
+        y = "Frequency") 
+```
 
+```{r}
+G <- cumsum(g)
+G_star <- cumsum(g_star)
+ggplot() +
+  geom_line(aes(x = support_pts, y = G, color = "Estimated cdf"), alpha=0.4) +
+  geom_line(aes(x = support_pts, y = G_star, color = "True cdf")) +
+  labs(title = "CDF of estimated class coverage distribution",
+        x = "Class coverage", 
+        y = "cdf")  +
+  lims(y=c(0,.05))
+
+```
+
+Now we make a plot with many estimated cdfs (each from a different simulated dataset)
+
+```{r}
+num_trials <- 50
+df <- matrix(0, nrow = length(g_star), ncol = num_trials)
+for (j in seq_len(num_trials)) {
+  
+  # Simulate
+  # Initialize array of zeros
+  sim_num_covered <- numeric(num_classes)
+  
+  for (i in 1:num_classes) {
+    theta_i <- sample(support_pts, size = 1, prob=g_star) 
+    sim_num_covered[i] <- rbinom(n = 1, size = class_cts[i], prob = theta_i)
+  }
+  
+  sim_obs_class_cov <- sim_num_covered / class_cts
+  
+  data <- cbind(class_cts, sim_num_covered)
+  result <- deconv(tau = support_pts, X = data, family = 'Binomial')
+  g <- result$stats[, "g"]
+  
+  G <- cumsum(g) # Compute cdf
+  df[,j] <- G
+}
+df <- data.frame(df)
+df <- cbind(support = support_pts, df)
+
+df <- df %>% pivot_longer(cols = "X1":paste0("X", num_trials))
+# df
+```
+
+
+```{r}
+G_star = cumsum(g_star)
+df2 <- data.frame(support_pts, G_star) # DataFrame containing true distribution 
+
+support_pts
+df %>% ggplot(mapping = aes(x = support, y = value, color=name)) + 
+  geom_line(alpha=0.3) +
+  geom_line(data = df2, mapping = aes(x=support_pts, y=G_star), color = "black", size=1.5) + 
+  theme(legend.position = "none") + # Remove legend 
+  labs(title = "Estimated cdf (colored lines) and true cdf (black line)",
+        x = "Class coverage", 
+        y = "cdf")  +
+  ylim(c(0, .1)) # Zoom in
+```
+We observe that the distributions obtained using the deconvolution procedure (colored lines) have heavier tails than the true distribution (black line). However, once we get past the ~3%-quantile, the estimated distributions match the true distribution pretty closely. 
