@@ -27,6 +27,7 @@ class Node():
         self.descendant_count_in = 0
         self.descendants_all = set()
         self.children = [] # ADDED
+        self.leaf_nodes = [] # ADDED: List of leaf nodes that are in subtree rooted at current node
     
     def add_child(self, child):
         """
@@ -85,6 +86,17 @@ class ImageNetHierarchy():
                      if (self.tree[wnid].descendant_count_in == 0 and self.tree[wnid].class_num == -1)]
         for d in del_nodes:
             self.tree.pop(d, None)
+
+        # ADDED
+        def get_leaf_nodes_in_subtree(node):
+            if node.descendant_count_in == 0:
+                node.leaf_nodes += node
+            else:
+                for c in node.children:
+                    get_leaf_nodes_in_subtree(c)
+                    node.leaf_nodes += c.leaf_nodes
+        
+                
                         
         assert all([k.descendant_count_in > 0 or k.class_num != -1 for k in self.tree.values()])
 
@@ -248,13 +260,13 @@ class ImageNetHierarchy():
             if descend:
                 # print("Descending into subtree rooted at", curr_node.name)
                 for child in curr_node.children:
-                    get_superclasses_by_min_size_helper(min_size, child, superclass_list)
+                    get_superclasses_by_min_size_helper(min_size, child, superclass_list, print_excluded_nodes=print_excluded_nodes)
             elif curr_node.descendant_count_in + 1 > min_size:   
                 superclass_list.append(curr_node)
                 # print('Appending', curr_node)
             else:
                 if print_excluded_nodes:
-                    print("Excluding", curr_node)
+                    print("Excluding subtree rooted at", curr_node)
 
         start_node = self.get_node("n00001740") # "physical object" node
         superclass_list = [] # Will be modified in place
@@ -296,11 +308,13 @@ class ImageNetHierarchy():
             
         for i in range(len(class_ranges)):
             for j in range(i + 1, len(class_ranges)):
-               print(superclass_wnid[i],superclass_wnid[j])
-               print(class_ranges[i])
-               print(class_ranges[j])
-               print('intersection', class_ranges[i].intersection(class_ranges[j]))
-               assert(len(class_ranges[i].intersection(class_ranges[j])) == 0)
+            #    print(superclass_wnid[i],superclass_wnid[j])
+            #    print(class_ranges[i])
+            #    print(class_ranges[j])
+            #    print('intersection', class_ranges[i].intersection(class_ranges[j]))
+               assert(len(class_ranges[i].intersection(class_ranges[j])) == 0, 
+                f'Superclass {superclass_wnid[i]} = {class_ranges[i]} and',
+                f'{superclass_wnid[j]} = {class_ranges[i]} have non-empty intersection')
                 
         return class_ranges, label_map
 

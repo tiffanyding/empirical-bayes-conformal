@@ -37,6 +37,14 @@ ggplot() +
   lims(y=c(0,.05))
 
 ```
+If we assume the deconvolved distribution is correct, what percentage of class coverages fall below, say, 80%? We can obtain this number by reading off the graph, but more precisely: 
+```{r}
+idx <- max(which(support_pts <= .80))
+G[idx]
+```
+
+So we estimate that **4%** of the 1000 ImageNet classes (a.k.a. 40 classes) achieve a class coverage of less than 80% when we asked for a class coverage of 90%. 
+
 # Sanity checks using simulated data
 
 To determine how well `deconvolveR` is able to recover the true prior distribution, we do the following:
@@ -96,48 +104,92 @@ ggplot() +
 Now we make a plot with many estimated cdfs (each from a different simulated dataset)
 
 ```{r}
-num_trials <- 50
-df <- matrix(0, nrow = length(g_star), ncol = num_trials)
-for (j in seq_len(num_trials)) {
-  
-  # Simulate
-  # Initialize array of zeros
-  sim_num_covered <- numeric(num_classes)
-  
-  for (i in 1:num_classes) {
-    theta_i <- sample(support_pts, size = 1, prob=g_star) 
-    sim_num_covered[i] <- rbinom(n = 1, size = class_cts[i], prob = theta_i)
+# Helper function
+validate_deconvolveR = function(support_pts, g_star, num_samples, class_cts, num_trials, ylims=c(0,1)) {
+  #' Inputs:
+  #'   - support_pts: List of support points
+  #'   - g_star: List representing the prior distribution for theta. Each element is 
+  #'       the probability density evaluated at the corresponding element of support_pts
+  #'   - num_samples: Number of samples to include in each dataset
+  #'   - num_trials: Number of synthetic datasets (of size num_samples) to generate
+
+  # Run simulations
+  df <- matrix(0, nrow = length(g_star), ncol = num_trials)
+  for (j in seq_len(num_trials)) {
+    
+    sim_num_covered <- numeric(num_samples) # Initialize array of zeros
+    
+    for (i in 1:num_samples) {
+      theta_i <- sample(support_pts, size = 1, prob=g_star) 
+      sim_num_covered[i] <- rbinom(n = 1, size = class_cts[i], prob = theta_i)
+    }
+    
+    sim_obs_class_cov <- sim_num_covered / class_cts
+    
+    data <- cbind(class_cts, sim_num_covered)
+    result <- deconv(tau = support_pts, X = data, family = 'Binomial')
+    g <- result$stats[, "g"]
+    G <- cumsum(g) # Compute cdf
+    df[,j] <- G
   }
   
-  sim_obs_class_cov <- sim_num_covered / class_cts
+  df <- data.frame(df)
+  df <- cbind(support = support_pts, df)
   
-  data <- cbind(class_cts, sim_num_covered)
-  result <- deconv(tau = support_pts, X = data, family = 'Binomial')
-  g <- result$stats[, "g"]
+  df <- df %>% pivot_longer(cols = "X1":paste0("X", num_trials))
   
-  G <- cumsum(g) # Compute cdf
-  df[,j] <- G
-}
-df <- data.frame(df)
-df <- cbind(support = support_pts, df)
+  # Plot
+  G_star = cumsum(g_star)
+  df2 <- data.frame(support_pts, G_star) # DataFrame containing true distribution 
+  
+  support_pts
+  df %>% ggplot(mapping = aes(x = support, y = value, color=name)) + 
+    geom_line(alpha=0.3) +
+    geom_line(data = df2, mapping = aes(x=support_pts, y=G_star), color = "black", size=1.5) + 
+    theme(legend.position = "none") + # Remove legend 
+    labs(title = "Estimated cdf (colored lines) and true cdf (black line)",
+          x = "Class coverage", 
+          y = "cdf")  +
+    ylim(ylims) # Zoom in
 
-df <- df %>% pivot_longer(cols = "X1":paste0("X", num_trials))
-# df
+}
+```
+
+```{r}
+g_star <- g # Use previously estimated distribution as true distribution
+num_trials <- 50
+num_samples <- 1000 # = number of classes
+
+validate_deconvolveR(support_pts, g_star, num_samples, class_cts, num_trials, ylims=c(0,.1))
+```
+We observe that the distributions obtained using the deconvolution procedure (colored lines) have heavier tails than the true distribution (black line). However, once we get past the ~3%-quantile, the estimated distributions match the true distribution pretty closely. 
+
+## Now let's try some different underlying prior distributions
+
+Let g_star be Normal(0.9, 0.5) truncated to be between 0 and 1, then renormalized. 
+
+```{r}
+g_star <- dnorm(support_pts, mean=0.9, sd=0.1)
+g_star <- g_star / sum(g_star)
+num_trials <- 50
+num_samples <- 1000 # = number of classes
+
+validate_deconvolveR(support_pts, g_star, num_samples, class_cts, num_trials, ylims=c(0,.1))
+```
+Let g_star be Uniform(0.8, 0.9)
+
+```{r}
+g_star <- dunif(support_pts, min=0.8, max=0.9)
+g_star <- g_star / sum(g_star)
+num_trials <- 50
+num_samples <- 1000 # = number of classes
 ```
 
 
 ```{r}
-G_star = cumsum(g_star)
-df2 <- data.frame(support_pts, G_star) # DataFrame containing true distribution 
-
-support_pts
-df %>% ggplot(mapping = aes(x = support, y = value, color=name)) + 
-  geom_line(alpha=0.3) +
-  geom_line(data = df2, mapping = aes(x=support_pts, y=G_star), color = "black", size=1.5) + 
-  theme(legend.position = "none") + # Remove legend 
-  labs(title = "Estimated cdf (colored lines) and true cdf (black line)",
-        x = "Class coverage", 
-        y = "cdf")  +
-  ylim(c(0, .1)) # Zoom in
 ```
-We observe that the distributions obtained using the deconvolution procedure (colored lines) have heavier tails than the true distribution (black line). However, once we get past the ~3%-quantile, the estimated distributions match the true distribution pretty closely. 
+
+
+```{r}
+validate_deconvolveR(support_pts, g_star, num_samples, class_cts, num_trials)
+```
