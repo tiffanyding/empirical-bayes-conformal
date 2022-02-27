@@ -24,10 +24,12 @@ class Node():
         self.name = name
         self.class_num = -1
         self.parent_wnid = parent_wnid
+        self.parents = [] # ADDED 
         self.descendant_count_in = 0
         self.descendants_all = set()
         self.children = [] # ADDED
         self.leaf_nodes = [] # ADDED: List of leaf nodes that are in subtree rooted at current node
+        self.depth = -np.inf # ADDED (depth = 0 corresponds to the root node)
     
     def add_child(self, child):
         """
@@ -36,7 +38,8 @@ class Node():
             child (Node) : Node object for child
         """
         child.parent_wnid = self.wnid
-        self.children.append(child) # ADDED
+        child.parents = child.parents + [self] # ADDED
+        self.children = self.children + [child] # ADDED
     
     def __str__(self):
         return f'Name: ({self.name}), ImageNet Class: ({self.class_num}), Descendants: ({self.descendant_count_in})'
@@ -81,11 +84,13 @@ class ImageNetHierarchy():
                 self.tree[node.parent_wnid].descendants_all.update(node.descendants_all)
                 self.tree[node.parent_wnid].descendants_all.add(node.wnid)
                 node = self.tree[node.parent_wnid]
-        
+
         del_nodes = [wnid for wnid in self.tree \
                      if (self.tree[wnid].descendant_count_in == 0 and self.tree[wnid].class_num == -1)]
         for d in del_nodes:
             self.tree.pop(d, None)
+        
+        assert all([k.descendant_count_in > 0 or k.class_num != -1 for k in self.tree.values()])
 
         # ADDED
         def get_leaf_nodes_in_subtree(node):
@@ -95,10 +100,23 @@ class ImageNetHierarchy():
                 for c in node.children:
                     get_leaf_nodes_in_subtree(c)
                     node.leaf_nodes += c.leaf_nodes
-        
-                
-                        
-        assert all([k.descendant_count_in > 0 or k.class_num != -1 for k in self.tree.values()])
+
+        # ADDED: Check for nodes with multiple parents
+        for wnid in self.in_wnids:
+            node = self.tree[wnid]
+            if len(node.parents) > 1:
+                print(node.name, 'has multiple parents:', [p.name for p in node.parents])
+
+        # ADDED: Compute node depths
+        root_node = self.get_node("n00001740") 
+        root_node.depth = 0
+        node_list = root_node.children.copy()
+        while node_list: 
+            curr_node = node_list.pop()
+            # TODO: Think about whether there is a better way to decide which parent to select for nodes that
+            # have multiple parents (currently just selecting the first one)
+            curr_node.depth = curr_node.parents[0].depth + 1 
+            node_list += curr_node.children              
 
         self.wnid_sorted = sorted(sorted([(k, v.descendant_count_in, len(v.descendants_all)) \
                                         for k, v in self.tree.items()
@@ -174,6 +192,48 @@ class ImageNetHierarchy():
         else:
             return self.tree[node_wnid].descendants_all
     
+    # ADDED
+    def get_deepest_common_ancestor(self, node1, node2):
+        '''
+        If the depth of A is greater than the depth of B, find the common ancestor of parent(A) and B.
+        Otherwise if the depth of B is greater than the depth of A, find the common ancestor of A and parent(B).
+        Otherwise, if A and B are the same node, then A is the deepest common ancestor.
+        Otherwise, find the common ancestor of parent(A) and parent(B).
+        '''
+        def get_deepest_node_in_list(node_list):
+            node_list = list(node_list)
+            max_val = max([n.depth for n in node_list])
+            max_idx = [n.depth for n in node_list].index(max_val)
+            return node_list[max_idx]
+
+        if node1 == node2:
+            return node1
+        elif node1.depth > node2.depth:
+            return get_deepest_node_in_list([self.get_deepest_common_ancestor(p, node2) for p in node1.parents])
+        elif node1.depth < node2.depth:
+            return get_deepest_node_in_list([self.get_deepest_common_ancestor(node1, p) for p in node2.parents])
+        else: 
+            all_combinations = sum([[(p1, p2) for p1 in node1.parents] for p2 in node2.parents], [])
+            return get_deepest_node_in_list(self.get_deepest_common_ancestor(p1, p2) for p1, p2 in all_combinations)
+        
+        # if node1 == node2:
+        #     return node1
+        # elif node1.depth > node2.depth:
+        #     return self.get_deepest_common_ancestor(node1.parent, node2)
+        # elif node1.depth < node2.depth:
+        #     return self.get_deepest_common_ancestor(node1, node2.parent)
+        # else: 
+        #     return self.get_deepest_common_ancestor(node1.parent, node2.parent)
+    
+    # ADDED
+    def compute_distance(self, node1, node2):
+        '''
+        Distance between node A and node B is depth(A) + depth(B) - 2* depth(C)
+        where C is the deepest (closest) common ancestor of A and B
+        '''
+        C = self.get_deepest_common_ancestor(node1, node2)
+        return node1.depth + node2.depth - 2 * C.depth
+
     def get_superclasses(self, n_superclasses, 
                          ancestor_wnid=None, superclass_lowest=None, 
                          balanced=True):
@@ -268,7 +328,7 @@ class ImageNetHierarchy():
                 if print_excluded_nodes:
                     print("Excluding subtree rooted at", curr_node)
 
-        start_node = self.get_node("n00001740") # "physical object" node
+        start_node = self.get_node("n00001740") # "entity" node
         superclass_list = [] # Will be modified in place
         get_superclasses_by_min_size_helper(min_size, start_node, superclass_list, print_excluded_nodes=print_excluded_nodes)
 
