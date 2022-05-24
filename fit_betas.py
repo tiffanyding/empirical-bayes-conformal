@@ -57,21 +57,25 @@ def beta_MoM(data):
 
 def fit_beta(k, min_variance):
     '''
+    UPDATE: We now use my MoM for all classes
+    
     Fit Beta distribution to class k scores. If beta.fit() returns an estimated distribution that is 
     unreasonably peaked (i.e., has variance lower than min_variance), we use method of moments instead
     '''
-    try:
-        class_k_scores = scores[labels==k,k]
-        est_alpha, est_beta = beta.fit(class_k_scores, method='MLE')[:2]
+#     try:
+#         class_k_scores = scores[labels==k,k]
+#         est_alpha, est_beta = beta.fit(class_k_scores, method='MLE')[:2]
         
-        # If estimated Beta distribution is unreasonaby peaked, use MoM
-        if beta_variance(est_beta, est_beta) < min_variance:
-            print('Using Method of Moments for class', k)
-            est_alpha, est_beta = beta_MoM(class_k_scores)
+#         # If estimated Beta distribution is unreasonaby peaked, use MoM
+#         if beta_variance(est_beta, est_beta) < min_variance:
+#             print('Using Method of Moments for class', k)
+#             est_alpha, est_beta = beta_MoM(class_k_scores)
             
-    except: # If the Beta fitting fails in any way, use MoM
-        print('Using Method of Moments for class', k)
-        est_alpha, est_beta = beta_MoM(class_k_scores)
+#     except: # If the Beta fitting fails in any way, use MoM
+#         print('Using Method of Moments for class', k)
+#         est_alpha, est_beta = beta_MoM(class_k_scores)
+
+    est_alpha, est_beta = beta_MoM(class_k_scores)
     
     return est_alpha, est_beta
 
@@ -98,7 +102,7 @@ if __name__ == '__main__':
     print(beta_params)
     save_to = '/home/eecs/tiffany_ding/code/empirical-bayes-conformal/data/est_beta_params.npy'
     np.save(save_to, beta_params)
-    print('Saved estimates Beta parameters to', save_to)
+    print('Saved estimated Beta parameters to', save_to)
 
 
 
