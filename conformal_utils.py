@@ -2,6 +2,50 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 #========================================
+#   Data preparation
+#========================================
+
+def split_X_and_y(X, y, n_k, num_classes=1000, seed=0):
+    '''
+    Randomly generate two subsets of features X and corresponding labels y such that the
+    first subset contains n_k instances of each class k and the second subset contains all
+    other instances 
+    
+    Inputs:
+        X: n x d array (e.g., matrix of softmax vectors)
+        y: n x 1 array
+        n_k: positive int
+        num_classes: total number of classes, corresponding to max(y)
+        seed: random seed
+        
+    Output:
+        X1, y1
+        X2, y2
+    '''
+    np.random.seed(seed)
+    
+    X1 = np.zeros((num_classes * n_k, num_classes))
+    y1 = np.zeros((num_classes * n_k, ), dtype=np.int8)
+    
+    all_selected_indices = np.zeros(y.shape)
+
+    for k in range(num_classes):
+
+        # Randomly select n instances of class k
+        idx = np.argwhere(y==k).flatten()
+        selected_idx = np.random.choice(idx, replace=False, size=(n_k,))
+
+        X1[n_k*k:n_k*(k+1), :] = X[selected_idx, :]
+        y1[n_k*k:(n_k+1)*k] = k
+        
+        all_selected_indices[selected_idx] = 1
+        
+    X2 = X[all_selected_indices == 0]
+    y2 = y[all_selected_indices == 0]
+    
+    return X1, y1, X2, y2
+
+#========================================
 #   Standard conformal inference
 #========================================
 
@@ -125,3 +169,7 @@ def compute_class_specific_coverage(true_labels, set_preds):
         class_specific_cov[k] = num_correct / len(selected_preds)
         
     return class_specific_cov
+
+# Helper function for computing average set size
+def compute_avg_set_size(list_of_arrays):
+    return np.mean([len(arr) for arr in list_of_arrays])

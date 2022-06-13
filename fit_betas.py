@@ -62,8 +62,9 @@ def fit_beta(k, min_variance):
     Fit Beta distribution to class k scores. If beta.fit() returns an estimated distribution that is 
     unreasonably peaked (i.e., has variance lower than min_variance), we use method of moments instead
     '''
-#     try:
-#         class_k_scores = scores[labels==k,k]
+    class_k_scores = scores[labels==k,k]
+    
+#     try:      
 #         est_alpha, est_beta = beta.fit(class_k_scores, method='MLE')[:2]
         
 #         # If estimated Beta distribution is unreasonaby peaked, use MoM
@@ -74,6 +75,8 @@ def fit_beta(k, min_variance):
 #     except: # If the Beta fitting fails in any way, use MoM
 #         print('Using Method of Moments for class', k)
 #         est_alpha, est_beta = beta_MoM(class_k_scores)
+
+    # Update: I now no longer use min_variance since I always use my MoM 
 
     est_alpha, est_beta = beta_MoM(class_k_scores)
     

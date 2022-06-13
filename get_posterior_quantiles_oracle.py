@@ -5,6 +5,10 @@ import pickle
 import seaborn as sns
 import torch
 
+# For parallelizing
+import multiprocessing
+import joblib
+
 from scipy.interpolate import interp2d
 from scipy.stats import beta, multivariate_normal, nct, t
 
@@ -26,8 +30,10 @@ np.random.seed(0)
 n = 20 # Number of calibration points per class k
 num_classes = 1000
 
+num_samples = 100000
+
 softmax_scores_subset = np.zeros((num_classes * n, num_classes))
-labels_subset = np.zeros((num_classes * n, ), dtype=np.int8)
+labels_subset = np.zeros((num_classes * n, ), dtype=np.int32)
 
 for k in range(num_classes):
     
@@ -36,10 +42,10 @@ for k in range(num_classes):
     selected_idx = np.random.choice(idx, replace=False, size=(n,))
     
     softmax_scores_subset[n*k:n*(k+1), :] = softmax_scores[selected_idx, :]
-    labels_subset[n*k:(n+1)*k] = k
+    labels_subset[(n*k):(n*(k+1))] = k
     
 # Only select data for which k is true class
-scores_subset = np.array([softmax_scores_subset[row,labels_subset[row]] for row in range(len(labels_subset))])
+scores_subset = 1 - np.array([softmax_scores_subset[row,labels_subset[row]] for row in range(len(labels_subset))])
 
 # Load KDE estimate of prior
 with open('.cache/kde.pkl', 'rb') as f:
@@ -61,9 +67,6 @@ positions = np.vstack([X.ravel(), Y.ravel()])
 # # Threshold for truncating probability distribution
 # threshold = .001 # this is over a small area 
 
-# Number of rejection sampling samplies
-num_samples = 1000
-
 # Grid for discretizing Beta mixture
 mixture_grid = np.linspace(1e-5,1-(1e-5),2000) # Exclude 0 and 1 since Beta density blows up at those points
 
@@ -72,15 +75,26 @@ alpha = 0.1
 
 D = kde(positions) # Evaluate D on grid
 
-def compute_classk_prod_f(k, a, b, scores_subset,logscale=False):
+def compute_classk_prod_f(k, a, b, n, scores_subset,logscale=False):
     '''
     Computes $\prod_{i=1}^{n_k} f(s_{k,i}; \alpha_k, \beta_k)$
     
     Inputs:
         k: class
         a, b: parameters of Beta(a,b)
+        scores_subset: vector in which first n elements are scores for class 0, 
+        second n elements are scores for class 1, and so on
     '''
-    f_ski = beta.pdf(scores_subset[k*n:(k+1)*n], a, b)
+    classk_scores = scores_subset[k*n:(k+1)*n]
+    
+    # Weirdly, some scores are exactly 0, which is a problem because the Beta 
+    # density blows up at 0 for some alpha, beta values. We replace these 0 
+    # values with randomly sampled values from classk_scores
+    classk_scores[classk_scores == 0] = np.random.choice(classk_scores[~(classk_scores == 0)], 
+                                                         size=classk_scores[classk_scores == 0].shape,
+                                                         replace=True)
+    
+    f_ski = beta.pdf(classk_scores, a, b)
     
     if logscale:
         log_prod = np.sum(np.log(f_ski))
@@ -89,17 +103,21 @@ def compute_classk_prod_f(k, a, b, scores_subset,logscale=False):
         prod = np.prod(f_ski)
         return prod
 
-def compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, scores_subset):
+def compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, n_k, scores_subset):
     '''
     Applies compute_classk_prod_f to all grid points in positions. Replaces nan entries
     with 0 and normalizes the distribution 
+    
+    Input:
+        -k: class
+        -n_k: number of instances of class k
     
     Outputs:
         prob: vector of probabilities
         density: prob reshaped into a matrix
     '''
 
-    prod_f = np.array([compute_classk_prod_f(k, positions[0,i], positions[1,i], scores_subset) 
+    prod_f = np.array([compute_classk_prod_f(k, positions[0,i], positions[1,i], n_k, scores_subset) 
                        for i in range(len(positions[0]))])
     prob = prod_f * D
 
@@ -112,6 +130,10 @@ def compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, scores_subset)
     
     # Reshape probs from vector into square matrix
     density = np.reshape(prob, X.shape) 
+    
+    # Check if probability contains NaNs or infs
+    if np.sum(np.isnan(prob)) + np.sum(np.isinf(prob)) > 0:
+        print(f"WARNING: Probabilities for class {k} contains NaNs and/or inf")
 
     return prob, density
 
@@ -131,14 +153,8 @@ def get_quantile(density, grid, alpha):
 
 quantiles = np.zeros((num_classes,))
 
-num_samples = 100000
-
-
-for k in range(num_classes):
-    print(f"Class {k}")
-
-    # Computes $\prod_{i=1}^{n_k} f(s_{k,i}; \alpha_k, \beta_k)$
-    prob, prob_matrix = compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, scores_subset)
+def estimate_quantile(k):
+    prob, prob_matrix = compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, n, scores_subset)
     normalized_prob = prob / np.sum(prob)
     
     samples = np.zeros((num_samples,))
@@ -158,11 +174,26 @@ for k in range(num_classes):
     samples = np.sort(samples)
     quantile = np.quantile(samples, np.ceil((1-alpha)*(n+1))/n)
     
-    print(f"Quantile: {quantile:.4f}")
-    quantiles[k] = quantile
+    print(f"Class {k} quantile: {quantile:.4f}")
     
+    return quantile
+
+# # OPTION 1: Basic for loop
+# for k in range(num_classes):
+#     quantiles[k] = estimate_quantile(k)
+    
+    
+# OPTION 2: Parallelized for loop  
+num_cpus = 72
+print(f'Splitting into {num_cpus} jobs...')
+
+quantiles = joblib.Parallel(n_jobs=num_cpus)(joblib.delayed(estimate_quantile)(k) for k in range(num_classes))
+
+quantiles = np.array(quantiles)
+
+print('quantiles:', quantiles)
     
 ## 3) Save estimated quantiles 
-save_to = '.cache/quantiles_06-02-22.npy'
+save_to = '.cache/quantiles_06-08-22.npy'
 np.save(save_to, quantiles)
 print(f'Saved quantiles to {save_to}')
