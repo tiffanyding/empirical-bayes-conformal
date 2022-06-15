@@ -12,6 +12,8 @@ import joblib
 from scipy.interpolate import interp2d
 from scipy.stats import beta, multivariate_normal, nct, t
 
+from conformal_utils import split_X_and_y
+
 np.random.seed(0)
 
 ## 1) Setup 
@@ -25,24 +27,25 @@ labels = torch.load('/home/eecs/tiffany_ding/code/SimCLRv2-Pytorch/.cache/logits
 labels = labels.type(torch.LongTensor).numpy()
 
 # Select subset of data
-np.random.seed(0)
 
 n = 20 # Number of calibration points per class k
 num_classes = 1000
 
-num_samples = 100000
+num_samples = 100000 # Number of Monte Carlo samples 
 
-softmax_scores_subset = np.zeros((num_classes * n, num_classes))
-labels_subset = np.zeros((num_classes * n, ), dtype=np.int32)
+softmax_scores_subset, labels_subset, _, _ = split_X_and_y(softmax_scores, labels, n, num_classes=1000, seed=0)
 
-for k in range(num_classes):
+# softmax_scores_subset = np.zeros((num_classes * n, num_classes))
+# labels_subset = np.zeros((num_classes * n, ), dtype=np.int32)
+
+# for k in range(num_classes):
     
-    # Randomly select n instances of class k
-    idx = np.argwhere(labels==k).flatten()
-    selected_idx = np.random.choice(idx, replace=False, size=(n,))
+#     # Randomly select n instances of class k
+#     idx = np.argwhere(labels==k).flatten()
+#     selected_idx = np.random.choice(idx, replace=False, size=(n,))
     
-    softmax_scores_subset[n*k:n*(k+1), :] = softmax_scores[selected_idx, :]
-    labels_subset[(n*k):(n*(k+1))] = k
+#     softmax_scores_subset[n*k:n*(k+1), :] = softmax_scores[selected_idx, :]
+#     labels_subset[(n*k):(n*(k+1))] = k
     
 # Only select data for which k is true class
 scores_subset = 1 - np.array([softmax_scores_subset[row,labels_subset[row]] for row in range(len(labels_subset))])
@@ -55,17 +58,12 @@ with open('.cache/kde.pkl', 'rb') as f:
 
 # ===== Hyperparameters =====
 
-num_classes = 1000
-
 # Grid
 xmin, xmax = 0, 4 # Grid bounds
 ymin, ymax = 0, 4 # Grid bounds
 nbins = 100 # Use 100 x 100 grid for now
 X, Y = np.mgrid[xmin:xmax:100j, ymin:ymax:100j] # Use 100 x 100 grid for now
 positions = np.vstack([X.ravel(), Y.ravel()])
-
-# # Threshold for truncating probability distribution
-# threshold = .001 # this is over a small area 
 
 # Grid for discretizing Beta mixture
 mixture_grid = np.linspace(1e-5,1-(1e-5),2000) # Exclude 0 and 1 since Beta density blows up at those points
@@ -138,22 +136,20 @@ def compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, n_k, scores_su
     return prob, density
 
 
-def get_quantile(density, grid, alpha):
-    assert(np.sum(np.isnan(density) + np.isinf(density)) == 0)
+# def get_quantile(density, grid, alpha):
+#     assert(np.sum(np.isnan(density) + np.isinf(density)) == 0)
     
-#     density /= np.sum(density) # ensure that density is normalized to sum to 1
-    grid_width = grid[1] - grid[0]
-    sums = np.cumsum(density) * grid_width
-    min_idx = np.argwhere(sums >= 1 - alpha)[0,0]
+# #     density /= np.sum(density) # ensure that density is normalized to sum to 1
+#     grid_width = grid[1] - grid[0]
+#     sums = np.cumsum(density) * grid_width
+#     min_idx = np.argwhere(sums >= 1 - alpha)[0,0]
     
-    return grid[min_idx]
+#     return grid[min_idx]
 
 
 ## 2) Estimate quantiles
 
-quantiles = np.zeros((num_classes,))
-
-def estimate_quantile(k):
+def estimate_quantile(k, return_samples=False):
     prob, prob_matrix = compute_prob_on_grid(k, positions, D, xmin, xmax, ymin, ymax, n, scores_subset)
     normalized_prob = prob / np.sum(prob)
     
@@ -171,29 +167,50 @@ def estimate_quantile(k):
         samples[i] = np.random.beta(alpha_k, beta_k)
 
     # Compute quantile
-    samples = np.sort(samples)
-    quantile = np.quantile(samples, np.ceil((1-alpha)*(n+1))/n)
+    quantile = np.quantile(samples, 1-alpha, interpolation='higher') 
     
     print(f"Class {k} quantile: {quantile:.4f}")
     
-    return quantile
+    if return_samples:
+        return quantile, samples
+    else:
+        return quantile
+
 
 # # OPTION 1: Basic for loop
 # for k in range(num_classes):
 #     quantiles[k] = estimate_quantile(k)
     
     
-# OPTION 2: Parallelized for loop  
-num_cpus = 72
+# # OPTION 2a: Parallelized for loop  
+# num_cpus = 72
+# print(f'Splitting into {num_cpus} jobs...')
+
+# quantiles = joblib.Parallel(n_jobs=num_cpus)(joblib.delayed(estimate_quantile)(k) for k in range(num_classes))
+
+# OPTION 2b: Parallelized for loop and cache samples
+num_cpus = 36 # 72
 print(f'Splitting into {num_cpus} jobs...')
 
-quantiles = joblib.Parallel(n_jobs=num_cpus)(joblib.delayed(estimate_quantile)(k) for k in range(num_classes))
+qhat_and_sample_list = joblib.Parallel(n_jobs=num_cpus)(joblib.delayed(estimate_quantile)(k, return_samples=True) for k in range(num_classes))
+
+quantiles = [x[0] for x in qhat_and_sample_list]
+cached_samples = [x[1] for x in qhat_and_sample_list]
 
 quantiles = np.array(quantiles)
+cached_samples = np.array(cached_samples)
 
-print('quantiles:', quantiles)
+print('cached_samples.shape:', cached_samples.shape)
+
+save_to = '.cache/cached_samples_06-10-22.npy'
+np.save(save_to, cached_samples)
+print(f'Saved cached_samples to {save_to}')
     
-## 3) Save estimated quantiles 
+## 3) Save quantiles
+print('quantiles:', quantiles)
+
 save_to = '.cache/quantiles_06-08-22.npy'
 np.save(save_to, quantiles)
 print(f'Saved quantiles to {save_to}')
+
+

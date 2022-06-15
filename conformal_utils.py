@@ -25,7 +25,7 @@ def split_X_and_y(X, y, n_k, num_classes=1000, seed=0):
     np.random.seed(seed)
     
     X1 = np.zeros((num_classes * n_k, num_classes))
-    y1 = np.zeros((num_classes * n_k, ), dtype=np.int8)
+    y1 = np.zeros((num_classes * n_k, ), dtype=np.int32)
     
     all_selected_indices = np.zeros(y.shape)
 
@@ -36,7 +36,7 @@ def split_X_and_y(X, y, n_k, num_classes=1000, seed=0):
         selected_idx = np.random.choice(idx, replace=False, size=(n_k,))
 
         X1[n_k*k:n_k*(k+1), :] = X[selected_idx, :]
-        y1[n_k*k:(n_k+1)*k] = k
+        y1[n_k*k:n_k*(k+1)] = k
         
         all_selected_indices[selected_idx] = 1
         
@@ -88,7 +88,7 @@ def create_prediction_sets(class_probs, q_hat):
     return set_preds
 
 #========================================
-#   Class-balanced conformal inference
+#   (Naive) Class-balanced conformal inference
 #========================================
 
 def compute_class_specific_qhats(cal_class_scores, cal_true_labels, alpha=.05, default_qhat=None):
