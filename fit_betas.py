@@ -38,7 +38,7 @@ def beta_variance(alpha, beta):
     Implements variance formula for Beta distribution
     '''
     num = alpha * beta
-    denom = (alpha + beta)^2 * (alpha + beta + 1)
+    denom = (alpha + beta) ** 2 * (alpha + beta + 1)
     
     return num / denom
 
