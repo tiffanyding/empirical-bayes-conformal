@@ -28,12 +28,15 @@ labels = labels.type(torch.LongTensor).numpy()
 
 # Select subset of data
 
-n = 20 # Number of calibration points per class k
+n = 20 # Number of points per class k used to fit Beta distributions
+n_tune = 10 # Number of points per class k used to perform conformal adjustment 
 num_classes = 1000
 
 num_samples = 100000 # Number of Monte Carlo samples 
 
-softmax_scores_subset, labels_subset, _, _ = split_X_and_y(softmax_scores, labels, n, num_classes=1000, seed=0)
+# Split into calibration and validation datasets, then further break down calibration set
+calib_scores, calib_labels, _, _ = split_X_and_y(softmax_scores, labels, n + n_tune, num_classes=1000, seed=0)
+softmax_scores_subset, labels_subset, _, _ = split_X_and_y(calib_scores, calib_labels, n, num_classes=1000, seed=0)
 
 # softmax_scores_subset = np.zeros((num_classes * n, num_classes))
 # labels_subset = np.zeros((num_classes * n, ), dtype=np.int32)
